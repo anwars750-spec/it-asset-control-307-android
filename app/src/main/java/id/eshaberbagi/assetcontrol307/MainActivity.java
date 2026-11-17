@@ -25,6 +25,12 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceResponse;
+import android.webkit.SslErrorHandler;
+import android.net.http.SslError;
+import android.content.ActivityNotFoundException;
+import androidx.browser.customtabs.CustomTabsIntent;
+import androidx.browser.customtabs.CustomTabColorSchemeParams;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -55,6 +61,7 @@ public class MainActivity extends Activity {
     private android.webkit.ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
     private PermissionRequest cameraPermissionRequest;
+    private boolean browserFallbackOpened = false;
 
     private int dp(float n) {
         return Math.round(n * getResources().getDisplayMetrics().density);
@@ -158,7 +165,9 @@ public class MainActivity extends Activity {
 
                 if (host != null && host.equalsIgnoreCase("accounts.google.com")
                         && request.isForMainFrame()) {
-                    showError();
+                    // Google authentication rejects embedded WebViews. Use the actual
+                    // Chrome session, where Google sign-in cookies already exist.
+                    openInCompatibleBrowser("Login Google memerlukan Chrome");
                     return true;
                 }
                 if (isGoogleScriptHost(uri)) {
@@ -178,6 +187,29 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 progress.setVisibility(View.GONE);
+                // Some Google sign-in redirects happen without shouldOverrideUrlLoading.
+                // They cannot be completed safely within an embedded WebView.
+                if (url != null && url.startsWith("https://accounts.google.com/")) {
+                    openInCompatibleBrowser("Login Google memerlukan Chrome");
+                }
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request,
+                                            WebResourceResponse errorResponse) {
+                if (request.isForMainFrame() && errorResponse != null &&
+                        (errorResponse.getStatusCode() == 401 ||
+                         errorResponse.getStatusCode() == 403)) {
+                    openInCompatibleBrowser("Akses Google memerlukan sesi browser");
+                }
+            }
+
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler handler,
+                                           SslError error) {
+                // Never bypass invalid SSL certificates.
+                handler.cancel();
+                openInCompatibleBrowser("Koneksi Google tidak dapat diverifikasi");
             }
 
             @Override
@@ -185,7 +217,7 @@ public class MainActivity extends Activity {
                                         WebResourceError error) {
                 if (request.isForMainFrame()) {
                     progress.setVisibility(View.GONE);
-                    showError();
+                    openInCompatibleBrowser("Halaman Google tidak dapat dimuat dalam aplikasi");
                 }
             }
         });
@@ -313,6 +345,42 @@ public class MainActivity extends Activity {
 
     private void showError() {
         runOnUiThread(() -> errorPanel.setVisibility(View.VISIBLE));
+    }
+
+    /**
+     * Fall back automatically to a browser session trusted for Google login.
+     * Chrome Custom Tabs share Chrome cookies. They are not fully fullscreen,
+     * but Google sign-in and Apps Script's HTML-service iframe work reliably
+     * compared with an embedded WebView.
+     */
+    private void openInCompatibleBrowser(String reason) {
+        runOnUiThread(() -> {
+            if (browserFallbackOpened || isFinishing()) return;
+            browserFallbackOpened = true;
+            try {
+                CustomTabColorSchemeParams colors =
+                    new CustomTabColorSchemeParams.Builder()
+                        .setToolbarColor(RED)
+                        .setSecondaryToolbarColor(RED)
+                        .build();
+                CustomTabsIntent tabs = new CustomTabsIntent.Builder()
+                    .setDefaultColorSchemeParams(colors)
+                    .setShowTitle(false)
+                    .setUrlBarHidingEnabled(true)
+                    .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
+                    .build();
+                tabs.launchUrl(this, Uri.parse(APP_URL));
+                finish();
+            } catch (Exception ex) {
+                browserFallbackOpened = false;
+                try {
+                    openExternally(APP_URL);
+                    finish();
+                } catch (Exception fallbackException) {
+                    showError();
+                }
+            }
+        });
     }
 
     private void openExternally(String url) {
