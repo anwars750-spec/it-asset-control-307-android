@@ -94,9 +94,12 @@ public class MainActivity extends Activity {
 
         configureWebView();
 
-        if (state != null) {
-            web.restoreState(state);
-        } else {
+        // Do not reload a live WebView on every onResume/onStart.
+        // restoreState() restores its navigation history when Android
+        // recreates this Activity following configuration/memory changes.
+        // The JS form can still be lost if Android kills the process; only
+        // the web application's own draft persistence can guarantee that.
+        if (state == null || web.restoreState(state) == null) {
             web.loadUrl(APP_URL);
         }
     }
@@ -126,6 +129,7 @@ public class MainActivity extends Activity {
         Button retry = new Button(this);
         retry.setText("Muat ulang");
         retry.setOnClickListener(v -> {
+            browserFallbackOpened = false;
             errorPanel.setVisibility(View.GONE);
             web.loadUrl(APP_URL);
         });
@@ -369,13 +373,17 @@ public class MainActivity extends Activity {
                     .setUrlBarHidingEnabled(true)
                     .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
                     .build();
+                // IMPORTANT: never finish the launcher Activity here.
+                // Leaving it alive keeps the Chrome Custom Tab in this app's
+                // Android task so switching to WhatsApp/camera and back can
+                // resume the existing SO page instead of starting over.
                 tabs.launchUrl(this, Uri.parse(APP_URL));
-                finish();
             } catch (Exception ex) {
                 browserFallbackOpened = false;
                 try {
+                    // Keep the root Activity alive in recents even when the
+                    // browser fallback is a normal external browser.
                     openExternally(APP_URL);
-                    finish();
                 } catch (Exception fallbackException) {
                     showError();
                 }
