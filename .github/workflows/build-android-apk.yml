@@ -29,9 +29,11 @@ jobs:
       - name: Verify Android SDK and accept licenses
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          command -v sdkmanager
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          echo "sdkmanager path: $SDKMANAGER"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
 
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
